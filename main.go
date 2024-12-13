@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ type Request struct {
 	ServerID  string
 	Approved  bool
 	CreatedAt time.Time
+	IP        string // Added IP field to store the requester's IP address
 }
 
 var (
@@ -89,7 +91,24 @@ func requireServerSecretKey() gin.HandlerFunc {
 }
 
 func setupRouter() *gin.Engine {
-	router := gin.Default()
+	router := gin.New()
+
+	router.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		// your custom format
+		return fmt.Sprintf("%s - [%s] \"%s %s %s %d %s \"%s\" %s\"\n",
+			param.ClientIP,
+			param.TimeStamp.Format(time.RFC1123),
+			param.Method,
+			param.Path,
+			param.Request.Proto,
+			param.StatusCode,
+			param.Latency,
+			param.Request.UserAgent(),
+			param.ErrorMessage,
+		)
+	}))
+
+	router.Use(gin.Recovery())
 
 	// Start cleanup goroutine
 	go func() {
@@ -125,6 +144,7 @@ func setupRouter() *gin.Engine {
 			ServerID:  json.ServerID,
 			Approved:  false,
 			CreatedAt: time.Now(),
+			IP:        c.ClientIP(), // Store the client's IP address
 		}
 		mu.Unlock()
 
