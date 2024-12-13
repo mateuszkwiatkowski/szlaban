@@ -10,10 +10,13 @@ import (
 	"github.com/google/uuid"
 )
 
+var (
+	requestTimeout = 300 * time.Second // 5 minutes timeout
+)
+
 const (
-	requestTimeout  = 300 * time.Second // 5 minutes timeout
-	adminSecretKey  = "admin"           // In production, this should come from environment variables
-	serverSecretKey = "server"          // In production, this should come from environment variables
+	adminSecretKey  = "admin"  // In production, this should come from environment variables
+	serverSecretKey = "server" // In production, this should come from environment variables
 )
 
 // Request represents a key request
@@ -204,6 +207,7 @@ func setupRouter() *gin.Engine {
 		defer mu.Unlock()
 
 		if req, exists := pendingRequests[json.ReqID]; exists {
+			println("Request exists:", json.ReqID)
 			if isRequestExpired(req) {
 				delete(pendingRequests, json.ReqID)
 				c.JSON(http.StatusGone, gin.H{"error": "Request has expired"})

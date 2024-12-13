@@ -34,8 +34,9 @@ func TestRequestKeyEndpoint(t *testing.T) {
 	// Test valid request
 	reqBody := map[string]string{"server_id": "test-server"}
 	jsonBody, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", "/request-key", bytes.NewBuffer(jsonBody))
+	req, _ := http.NewRequest("POST", "/server/request-key", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+serverSecretKey)
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusAccepted, w.Code)
@@ -46,8 +47,6 @@ func TestRequestKeyEndpoint(t *testing.T) {
 
 	// Verify response structure
 	assert.Contains(t, response, "request_id")
-	assert.Contains(t, response, "approve_link")
-	assert.Contains(t, response, "deny_link")
 
 	// Verify UUID validity
 	reqID := response["request_id"].(string)
@@ -62,8 +61,9 @@ func TestApprovalEndpoint(t *testing.T) {
 	w := httptest.NewRecorder()
 	reqBody := map[string]string{"server_id": "test-server"}
 	jsonBody, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", "/request-key", bytes.NewBuffer(jsonBody))
+	req, _ := http.NewRequest("POST", "/server/request-key", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+serverSecretKey)
 	router.ServeHTTP(w, req)
 
 	var response map[string]interface{}
@@ -79,7 +79,7 @@ func TestApprovalEndpoint(t *testing.T) {
 		{
 			name:       "Valid approval",
 			reqID:      reqID,
-			authHeader: "Bearer " + SecretKey,
+			authHeader: "Bearer " + adminSecretKey,
 			wantCode:   http.StatusOK,
 		},
 		{
@@ -97,7 +97,7 @@ func TestApprovalEndpoint(t *testing.T) {
 		{
 			name:       "Invalid UUID",
 			reqID:      "invalid-uuid",
-			authHeader: "Bearer " + SecretKey,
+			authHeader: "Bearer " + adminSecretKey,
 			wantCode:   http.StatusBadRequest,
 		},
 	}
@@ -105,7 +105,7 @@ func TestApprovalEndpoint(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			req, _ := http.NewRequest("GET", "/approve/"+tt.reqID, nil)
+			req, _ := http.NewRequest("GET", "/admin/approve/"+tt.reqID, nil)
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
 			}
@@ -117,9 +117,9 @@ func TestApprovalEndpoint(t *testing.T) {
 
 func TestRequestExpiration(t *testing.T) {
 	// Override request timeout for testing
-	originalTimeout := RequestTimeout
-	RequestTimeout = 1 * time.Second
-	defer func() { RequestTimeout = originalTimeout }()
+	originalTimeout := requestTimeout
+	requestTimeout = 1 * time.Second
+	defer func() { requestTimeout = originalTimeout }()
 
 	router := setupRouter()
 
@@ -127,7 +127,8 @@ func TestRequestExpiration(t *testing.T) {
 	w := httptest.NewRecorder()
 	reqBody := map[string]string{"server_id": "test-server"}
 	jsonBody, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", "/request-key", bytes.NewBuffer(jsonBody))
+	req, _ := http.NewRequest("POST", "/server/request-key", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Authorization", "Bearer "+serverSecretKey)
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -139,13 +140,13 @@ func TestRequestExpiration(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Try to approve expired request
-	w = httptest.NewRecorder()
-	req, _ = http.NewRequest("GET", "/approve/"+reqID, nil)
-	req.Header.Set("Authorization", "Bearer "+SecretKey)
-	router.ServeHTTP(w, req)
+	r := httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/admin/approve/"+reqID, nil)
+	req.Header.Set("Authorization", "Bearer "+adminSecretKey)
+	router.ServeHTTP(r, req)
 
-	assert.Equal(t, http.StatusGone, w.Code)
-	assert.Contains(t, w.Body.String(), "expired")
+	assert.Equal(t, http.StatusGone, r.Code)
+	assert.Contains(t, r.Body.String(), "expired")
 }
 
 func TestGetKeyEndpoint(t *testing.T) {
@@ -155,7 +156,8 @@ func TestGetKeyEndpoint(t *testing.T) {
 	w := httptest.NewRecorder()
 	reqBody := map[string]string{"server_id": "test-server"}
 	jsonBody, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", "/request-key", bytes.NewBuffer(jsonBody))
+	req, _ := http.NewRequest("POST", "/server/request-key", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Authorization", "Bearer "+serverSecretKey)
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -165,8 +167,8 @@ func TestGetKeyEndpoint(t *testing.T) {
 
 	// Approve the request
 	w = httptest.NewRecorder()
-	req, _ = http.NewRequest("GET", "/approve/"+reqID, nil)
-	req.Header.Set("Authorization", "Bearer "+SecretKey)
+	req, _ = http.NewRequest("GET", "/admin/approve/"+reqID, nil)
+	req.Header.Set("Authorization", "Bearer "+adminSecretKey)
 	router.ServeHTTP(w, req)
 
 	tests := []struct {
@@ -196,7 +198,8 @@ func TestGetKeyEndpoint(t *testing.T) {
 			w := httptest.NewRecorder()
 			reqBody := map[string]string{"req_id": tt.reqID}
 			jsonBody, _ := json.Marshal(reqBody)
-			req, _ := http.NewRequest("POST", "/get-key", bytes.NewBuffer(jsonBody))
+			req, _ := http.NewRequest("POST", "/server/get-key", bytes.NewBuffer(jsonBody))
+			req.Header.Set("Authorization", "Bearer "+serverSecretKey)
 			req.Header.Set("Content-Type", "application/json")
 			router.ServeHTTP(w, req)
 			assert.Equal(t, tt.wantCode, w.Code)
@@ -211,7 +214,8 @@ func TestDenyEndpoint(t *testing.T) {
 	w := httptest.NewRecorder()
 	reqBody := map[string]string{"server_id": "test-server"}
 	jsonBody, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", "/request-key", bytes.NewBuffer(jsonBody))
+	req, _ := http.NewRequest("POST", "/server/request-key", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Authorization", "Bearer "+serverSecretKey)
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
@@ -221,20 +225,22 @@ func TestDenyEndpoint(t *testing.T) {
 
 	// Test deny endpoint
 	w = httptest.NewRecorder()
-	req, _ = http.NewRequest("GET", "/deny/"+reqID, nil)
-	req.Header.Set("Authorization", "Bearer "+SecretKey)
+	req, _ = http.NewRequest("GET", "/admin/deny/"+reqID, nil)
+	req.Header.Set("Authorization", "Bearer "+adminSecretKey)
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "denied")
 
 	// Verify request was removed
-	w = httptest.NewRecorder()
+	time.Sleep(1 * time.Second)
+	r := httptest.NewRecorder()
 	reqBody = map[string]string{"req_id": reqID}
 	jsonBody, _ = json.Marshal(reqBody)
-	req, _ = http.NewRequest("POST", "/get-key", bytes.NewBuffer(jsonBody))
+	req, _ = http.NewRequest("POST", "/server/get-key", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Authorization", "Bearer "+serverSecretKey)
 	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
+	router.ServeHTTP(r, req)
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusNotFound, r.Code)
 }
