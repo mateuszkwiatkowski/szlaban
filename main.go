@@ -10,17 +10,18 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	requestTimeout  = 300 * time.Second // 5 minutes timeout
-	adminSecretKey  = "admin"           // In production, this should come from environment variables
-	serverSecretKey = "server"          // In production, this should come from environment variables
+var (
+	// RequestTimeout is the duration after which requests expire
+	RequestTimeout = 300 * time.Second
+	// SecretKey is the key used to authenticate admin requests
+	SecretKey = "server"
 )
 
 // Request represents a key request
 type Request struct {
-	ServerID  string
-	Approved  bool
-	CreatedAt time.Time
+	ServerID    string
+	Approved    bool
+	CreatedAt   time.Time
 }
 
 var (
@@ -30,7 +31,7 @@ var (
 
 // isRequestExpired checks if a request has expired
 func isRequestExpired(req *Request) bool {
-	return time.Since(req.CreatedAt) > requestTimeout
+	return time.Since(req.CreatedAt) > RequestTimeout
 }
 
 // cleanupExpiredRequests removes expired requests
@@ -46,7 +47,7 @@ func cleanupExpiredRequests() {
 }
 
 // requireSecretKey middleware validates the secret key in the Authorization header
-func requireAdminSecretKey() gin.HandlerFunc {
+func requireSecretKey() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -56,7 +57,7 @@ func requireAdminSecretKey() gin.HandlerFunc {
 		}
 
 		// Use constant time comparison to prevent timing attacks
-		if subtle.ConstantTimeCompare([]byte(authHeader), []byte("Bearer "+adminSecretKey)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(authHeader), []byte("Bearer "+SecretKey)) != 1 {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization key"})
 			c.Abort()
 			return
@@ -66,26 +67,6 @@ func requireAdminSecretKey() gin.HandlerFunc {
 	}
 }
 
-// requireSecretKey middleware validates the secret key in the Authorization header
-func requireServerSecretKey() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
-			c.Abort()
-			return
-		}
-
-		// Use constant time comparison to prevent timing attacks
-		if subtle.ConstantTimeCompare([]byte(authHeader), []byte("Bearer "+serverSecretKey)) != 1 {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization key"})
-			c.Abort()
-			return
-		}
-
-		c.Next()
-	}
-}
 func setupRouter() *gin.Engine {
 	router := gin.Default()
 
@@ -97,16 +78,12 @@ func setupRouter() *gin.Engine {
 		}
 	}()
 
-	// Protected endpoints require secret key
-	adminProtected := router.Group("/admin/", requireAdminSecretKey())
-	serverProtected := router.Group("/server/", requireServerSecretKey())
-
 	router.GET("/pingz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "pong"})
 	})
 
 	// Endpoint to receive key requests
-	serverProtected.POST("/request-key", func(c *gin.Context) {
+	router.POST("/request-key", func(c *gin.Context) {
 		var json struct {
 			ServerID string `json:"server_id"`
 		}
@@ -120,21 +97,26 @@ func setupRouter() *gin.Engine {
 
 		mu.Lock()
 		pendingRequests[reqID] = &Request{
-			ServerID:  json.ServerID,
-			Approved:  false,
-			CreatedAt: time.Now(),
+			ServerID:    json.ServerID,
+			Approved:    false,
+			CreatedAt:   time.Now(),
 		}
 		mu.Unlock()
 
 		// Simulate sending a notification
 		c.JSON(http.StatusAccepted, gin.H{
-			"message":    "Request received. Awaiting approval. Request will expire in 5 minutes.",
-			"request_id": reqID,
+			"message":      "Request received. Awaiting approval. Request will expire in 5 minutes.",
+			"request_id":   reqID,
+			"approve_link": "/approve/" + reqID,
+			"deny_link":    "/deny/" + reqID,
 		})
 	})
 
+	// Protected endpoints require secret key
+	protected := router.Group("/", requireSecretKey())
+
 	// Endpoint to approve a request (protected)
-	adminProtected.GET("/approve/:req_id", func(c *gin.Context) {
+	protected.GET("/approve/:req_id", func(c *gin.Context) {
 		reqID := c.Param("req_id")
 
 		// Validate UUID format
@@ -160,7 +142,7 @@ func setupRouter() *gin.Engine {
 	})
 
 	// Endpoint to deny a request (protected)
-	adminProtected.GET("/deny/:req_id", func(c *gin.Context) {
+	protected.GET("/deny/:req_id", func(c *gin.Context) {
 		reqID := c.Param("req_id")
 
 		// Validate UUID format
@@ -186,10 +168,9 @@ func setupRouter() *gin.Engine {
 	})
 
 	// Endpoint to get the decryption key
-	serverProtected.POST("/get-key", func(c *gin.Context) {
+	router.POST("/get-key", func(c *gin.Context) {
 		var json struct {
-			ReqID    string `json:"req_id"`
-			ServerID string `json:"server_id"`
+			ReqID string `json:"req_id"`
 		}
 		if err := c.ShouldBindJSON(&json); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
