@@ -207,7 +207,6 @@ func setupRouter() *gin.Engine {
 		defer mu.Unlock()
 
 		if req, exists := pendingRequests[json.ReqID]; exists {
-			println("Request exists:", json.ReqID)
 			if isRequestExpired(req) {
 				delete(pendingRequests, json.ReqID)
 				c.JSON(http.StatusGone, gin.H{"error": "Request has expired"})
