@@ -117,9 +117,9 @@ func TestApprovalEndpoint(t *testing.T) {
 
 func TestRequestExpiration(t *testing.T) {
 	// Override request timeout for testing
-	originalTimeout := requestTimeout
-	requestTimeout = 1 * time.Second
-	defer func() { requestTimeout = originalTimeout }()
+	originalTimeout := approvalTimeout
+	approvalTimeout = "1s"
+	defer func() { approvalTimeout = originalTimeout }()
 
 	router := setupRouter()
 

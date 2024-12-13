@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -12,12 +13,10 @@ import (
 )
 
 var (
-	requestTimeout = 300 * time.Second // 5 minutes timeout
-)
-
-const (
-	adminSecretKey  = "admin"  // In production, this should come from environment variables
-	serverSecretKey = "server" // In production, this should come from environment variables
+	adminSecretKey  = os.Getenv("ADMIN_SECRET_KEY")
+	serverSecretKey = os.Getenv("SERVER_SECRET_KEY")
+	bindAddress     = os.Getenv("BIND_ADDRESS")
+	approvalTimeout = os.Getenv("APPROVAL_TIMEOUT")
 )
 
 // Request represents a key request
@@ -35,7 +34,11 @@ var (
 
 // isRequestExpired checks if a request has expired
 func isRequestExpired(req *Request) bool {
-	return time.Since(req.CreatedAt) > requestTimeout
+	approvalTimeout, err := time.ParseDuration(approvalTimeout)
+	if err != nil {
+		panic(err)
+	}
+	return time.Since(req.CreatedAt) > approvalTimeout
 }
 
 // cleanupExpiredRequests removes expired requests
@@ -251,6 +254,7 @@ func setupRouter() *gin.Engine {
 }
 
 func main() {
+
 	router := setupRouter()
-	router.Run(":8080") // Start server on port 8080
+	router.Run(bindAddress) // Start server on port 8080
 }
