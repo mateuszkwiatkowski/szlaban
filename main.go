@@ -90,6 +90,118 @@ func requireServerSecretKey() gin.HandlerFunc {
 	}
 }
 
+func handleAdminApproveRequest(c *gin.Context) {
+	reqID := c.Param("req_id")
+
+	// Validate UUID format
+	if _, err := uuid.Parse(reqID); err != nil {
+		c.String(http.StatusBadRequest, "Invalid request ID format")
+		return
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if req, exists := pendingRequests[reqID]; exists {
+		if isRequestExpired(req) {
+			delete(pendingRequests, reqID)
+			c.String(http.StatusGone, "Request %s has expired.", reqID)
+			return
+		}
+		req.Approved = true
+		c.String(http.StatusOK, "Request %s approved.", reqID)
+	} else {
+		c.String(http.StatusNotFound, "Request not found.")
+	}
+}
+
+func handleAdminDenyRequest(c *gin.Context) {
+	reqID := c.Param("req_id")
+
+	// Validate UUID format
+	if _, err := uuid.Parse(reqID); err != nil {
+		c.String(http.StatusBadRequest, "Invalid request ID format")
+		return
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if req, exists := pendingRequests[reqID]; exists {
+		if isRequestExpired(req) {
+			delete(pendingRequests, reqID)
+			c.String(http.StatusGone, "Request %s has expired.", reqID)
+			return
+		}
+		delete(pendingRequests, reqID)
+		c.String(http.StatusOK, "Request %s denied and removed.", reqID)
+	} else {
+		c.String(http.StatusNotFound, "Request not found.")
+	}
+}
+
+func handleServerRequestKey(c *gin.Context) {
+	var json struct {
+		ServerID string `json:"server_id"`
+	}
+	if err := c.ShouldBindJSON(&json); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	// Generate a secure random UUID for the request
+	reqID := uuid.New().String()
+
+	mu.Lock()
+	pendingRequests[reqID] = &Request{
+		ServerID:  json.ServerID,
+		Approved:  false,
+		CreatedAt: time.Now(),
+		IP:        c.ClientIP(), // Store the client's IP address
+	}
+	mu.Unlock()
+
+	// Simulate sending a notification
+	c.JSON(http.StatusAccepted, gin.H{
+		"message":    "Request received. Awaiting approval. Request will expire in 5 minutes.",
+		"request_id": reqID,
+	})
+}
+
+func handleServerGetKey(c *gin.Context) {
+	var json struct {
+		ReqID string `json:"req_id"`
+	}
+	if err := c.ShouldBindJSON(&json); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	// Validate UUID format
+	if _, err := uuid.Parse(json.ReqID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request ID format"})
+		return
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if req, exists := pendingRequests[json.ReqID]; exists {
+		if isRequestExpired(req) {
+			delete(pendingRequests, json.ReqID)
+			c.JSON(http.StatusGone, gin.H{"error": "Request has expired"})
+			return
+		}
+		if req.Approved {
+			c.JSON(http.StatusOK, gin.H{"key": "your-decryption-key"})
+		} else {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Request not approved yet"})
+		}
+	} else {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Request not found"})
+	}
+}
+
 func setupRouter() *gin.Engine {
 	router := gin.New()
 
@@ -127,120 +239,13 @@ func setupRouter() *gin.Engine {
 	})
 
 	// Endpoint to receive key requests
-	serverProtected.POST("/request-key", func(c *gin.Context) {
-		var json struct {
-			ServerID string `json:"server_id"`
-		}
-		if err := c.ShouldBindJSON(&json); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-			return
-		}
-
-		// Generate a secure random UUID for the request
-		reqID := uuid.New().String()
-
-		mu.Lock()
-		pendingRequests[reqID] = &Request{
-			ServerID:  json.ServerID,
-			Approved:  false,
-			CreatedAt: time.Now(),
-			IP:        c.ClientIP(), // Store the client's IP address
-		}
-		mu.Unlock()
-
-		// Simulate sending a notification
-		c.JSON(http.StatusAccepted, gin.H{
-			"message":    "Request received. Awaiting approval. Request will expire in 5 minutes.",
-			"request_id": reqID,
-		})
-	})
-
+	serverProtected.POST("/request-key", handleServerRequestKey)
 	// Endpoint to approve a request (protected)
-	adminProtected.GET("/approve/:req_id", func(c *gin.Context) {
-		reqID := c.Param("req_id")
-
-		// Validate UUID format
-		if _, err := uuid.Parse(reqID); err != nil {
-			c.String(http.StatusBadRequest, "Invalid request ID format")
-			return
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-
-		if req, exists := pendingRequests[reqID]; exists {
-			if isRequestExpired(req) {
-				delete(pendingRequests, reqID)
-				c.String(http.StatusGone, "Request %s has expired.", reqID)
-				return
-			}
-			req.Approved = true
-			c.String(http.StatusOK, "Request %s approved.", reqID)
-		} else {
-			c.String(http.StatusNotFound, "Request not found.")
-		}
-	})
-
+	adminProtected.GET("/approve/:req_id", handleAdminApproveRequest)
 	// Endpoint to deny a request (protected)
-	adminProtected.GET("/deny/:req_id", func(c *gin.Context) {
-		reqID := c.Param("req_id")
-
-		// Validate UUID format
-		if _, err := uuid.Parse(reqID); err != nil {
-			c.String(http.StatusBadRequest, "Invalid request ID format")
-			return
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-
-		if req, exists := pendingRequests[reqID]; exists {
-			if isRequestExpired(req) {
-				delete(pendingRequests, reqID)
-				c.String(http.StatusGone, "Request %s has expired.", reqID)
-				return
-			}
-			delete(pendingRequests, reqID)
-			c.String(http.StatusOK, "Request %s denied and removed.", reqID)
-		} else {
-			c.String(http.StatusNotFound, "Request not found.")
-		}
-	})
-
+	adminProtected.GET("/deny/:req_id", handleAdminDenyRequest)
 	// Endpoint to get the decryption key
-	serverProtected.POST("/get-key", func(c *gin.Context) {
-		var json struct {
-			ReqID string `json:"req_id"`
-		}
-		if err := c.ShouldBindJSON(&json); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-			return
-		}
-
-		// Validate UUID format
-		if _, err := uuid.Parse(json.ReqID); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request ID format"})
-			return
-		}
-
-		mu.Lock()
-		defer mu.Unlock()
-
-		if req, exists := pendingRequests[json.ReqID]; exists {
-			if isRequestExpired(req) {
-				delete(pendingRequests, json.ReqID)
-				c.JSON(http.StatusGone, gin.H{"error": "Request has expired"})
-				return
-			}
-			if req.Approved {
-				c.JSON(http.StatusOK, gin.H{"key": "your-decryption-key"})
-			} else {
-				c.JSON(http.StatusForbidden, gin.H{"error": "Request not approved yet"})
-			}
-		} else {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Request not found"})
-		}
-	})
+	serverProtected.POST("/get-key", handleServerGetKey)
 
 	return router
 }
