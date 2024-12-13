@@ -24,7 +24,7 @@ while true; do
     KEY=$(echo $RESPONSE | jq -r '.key')
     
     if [ "$KEY" != "null" ]; then
-        echo "$KEY"
+        printf "\nKEY: $KEY"
         break
     fi
     printf "."
